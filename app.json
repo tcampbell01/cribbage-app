@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Cribbage Coach",
+    "slug": "cribbage-coach",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "cribbage-coach",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F7F4EE"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite"
+    ]
+  }
+}
