@@ -15,12 +15,14 @@ type Lane = {
   color: string;
 };
 
-const TRACK_POINTS = Array.from({ length: 61 }, (_, index) => index);
+const TRACK_ROWS = Array.from({ length: 30 }, (_, index) => ({
+  left: 30 - index,
+  right: 31 + index,
+}));
 const LANES: Lane[] = [
   { id: 'computer', color: '#D94A3F' },
   { id: 'player', color: '#1777B7' },
 ];
-const FIVE_MARKERS = Array.from({ length: 12 }, (_, index) => index);
 
 export function CribbageBoard({
   computerBackPeg,
@@ -30,8 +32,6 @@ export function CribbageBoard({
   playerBackPeg,
   playerFrontPeg,
 }: Props) {
-  const playerLap = playerFrontPeg > 60 ? 2 : 1;
-
   function movePeg(delta: number) {
     onPegChange(Math.max(0, Math.min(maxScore, playerFrontPeg + delta)));
   }
@@ -49,11 +49,6 @@ export function CribbageBoard({
     <View style={styles.board}>
       <View style={styles.boardCap}>
         <Text style={styles.boardTitle}>Cribbage Board</Text>
-        <View style={styles.finishPocket}>
-          <Text style={styles.finishText}>FINISH</Text>
-          <Feather name="flag" size={16} color="#5B3D22" />
-        </View>
-        <Text style={styles.lapText}>Lap {playerLap} of 2</Text>
       </View>
 
       <View style={styles.trackFrame}>
@@ -75,15 +70,22 @@ export function CribbageBoard({
         />
       </View>
 
-      <View style={styles.departBox}>
-        <Text style={styles.departText}>START / DEPART</Text>
-      </View>
-
-      <View style={styles.legend}>
-        <LegendPeg color="#2D5A3B" label="Your front peg" />
-        <LegendPeg color="#173D28" label="Your back peg" />
-        <LegendPeg color="#7A3E2E" label="Computer front" />
-        <LegendPeg color="#5F261D" label="Computer back" />
+      <View style={styles.startRow}>
+        <StartPegHoles
+          pegColors={[
+            computerBackPeg <= 0 ? '#5F261D' : null,
+            computerFrontPeg <= 0 ? '#7A3E2E' : null,
+          ]}
+        />
+        <View style={styles.departBox}>
+          <Text style={styles.departText}>START</Text>
+        </View>
+        <StartPegHoles
+          pegColors={[
+            playerBackPeg <= 0 ? '#173D28' : null,
+            playerFrontPeg <= 0 ? '#2D5A3B' : null,
+          ]}
+        />
       </View>
 
       <View style={styles.pegControls}>
@@ -108,6 +110,18 @@ export function CribbageBoard({
   );
 }
 
+function StartPegHoles({ pegColors }: { pegColors: [string | null, string | null] }) {
+  return (
+    <View style={styles.startPegGroup}>
+      {pegColors.map((color, index) => (
+        <View key={index} style={styles.startHole}>
+          {color ? <View style={[styles.startPeg, { backgroundColor: color }]} /> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function TrackLane({
   backPeg,
   backPegColor,
@@ -125,40 +139,70 @@ function TrackLane({
 }) {
   return (
     <View style={[styles.lane, { backgroundColor: color }]}>
-      {TRACK_POINTS.map((point) => {
-        const HoleContainer = onChooseHole ? Pressable : View;
-        const isFiveLine = point > 0 && point % 5 === 0;
-
-        return (
-          <HoleContainer
-            key={point}
-            accessibilityLabel={onChooseHole ? `Move front peg to ${point}` : undefined}
-            onPress={onChooseHole ? () => onChooseHole(point) : undefined}
-            style={[
-              styles.hole,
-              isFiveLine ? styles.fiveLineHole : null,
-              onChooseHole ? styles.clickableHole : null,
-            ]}
-          >
-            {point === scoreToTrackPoint(backPeg) ? <Peg color={backPegColor} offset="back" /> : null}
-            {point === scoreToTrackPoint(frontPeg) ? (
-              <Peg color={frontPegColor} offset="front" />
-            ) : null}
-          </HoleContainer>
-        );
-      })}
+      {TRACK_ROWS.map((row) => (
+        <View key={`${row.left}-${row.right}`} style={styles.laneRow}>
+          <TrackHole
+            backPeg={backPeg}
+            backPegColor={backPegColor}
+            frontPeg={frontPeg}
+            frontPegColor={frontPegColor}
+            onChooseHole={onChooseHole}
+            point={row.left}
+          />
+          <TrackHole
+            backPeg={backPeg}
+            backPegColor={backPegColor}
+            frontPeg={frontPeg}
+            frontPegColor={frontPegColor}
+            onChooseHole={onChooseHole}
+            point={row.right}
+          />
+        </View>
+      ))}
     </View>
   );
 }
 
-function NumberLine() {
+function TrackHole({
+  backPeg,
+  backPegColor,
+  frontPeg,
+  frontPegColor,
+  onChooseHole,
+  point,
+}: {
+  backPeg: number;
+  backPegColor: string;
+  frontPeg: number;
+  frontPegColor: string;
+  onChooseHole?: (point: number) => void;
+  point: number;
+}) {
+  const HoleContainer = onChooseHole ? Pressable : View;
+  const isFiveLine = point % 5 === 0;
+
   return (
-    <View style={styles.numberLine}>
-      {FIVE_MARKERS.map((marker) => (
-        <View key={marker} style={styles.numberMarker} />
-      ))}
-    </View>
+    <HoleContainer
+      accessibilityLabel={onChooseHole ? `Move front peg to ${point}` : undefined}
+      onPress={onChooseHole ? () => onChooseHole(point) : undefined}
+      style={[
+        styles.hole,
+        isFiveLine ? styles.fiveLineHole : null,
+        onChooseHole ? styles.clickableHole : null,
+      ]}
+    >
+      {backPeg > 0 && point === scoreToTrackPoint(backPeg) ? (
+        <Peg color={backPegColor} offset="back" />
+      ) : null}
+      {frontPeg > 0 && point === scoreToTrackPoint(frontPeg) ? (
+        <Peg color={frontPegColor} offset="front" />
+      ) : null}
+    </HoleContainer>
   );
+}
+
+function NumberLine() {
+  return <View style={styles.numberLine} />;
 }
 
 function scoreToTrackPoint(score: number) {
@@ -175,15 +219,6 @@ function Peg({ color, offset }: { color: string; offset: 'back' | 'front' }) {
         offset === 'back' ? styles.backPeg : styles.frontPeg,
       ]}
     />
-  );
-}
-
-function LegendPeg({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
   );
 }
 
@@ -227,31 +262,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
-  lapText: {
-    color: '#5B3D22',
-    fontSize: 13,
-    fontWeight: '900',
-  },
   trackFrame: {
     alignSelf: 'center',
-    backgroundColor: '#EBC389',
-    borderColor: '#A76F38',
-    borderRadius: 999,
-    borderWidth: 1,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
     flexDirection: 'row',
     gap: 8,
-    padding: 12,
+    padding: 0,
   },
   lane: {
-    alignContent: 'flex-start',
     borderColor: 'rgba(64, 39, 19, 0.36)',
     borderRadius: 999,
     borderWidth: 1,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
     padding: 9,
-    width: 62,
+    width: 80,
+  },
+  laneRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
   hole: {
     backgroundColor: '#4D3320',
@@ -263,9 +292,8 @@ const styles = StyleSheet.create({
     width: 18,
   },
   fiveLineHole: {
-    borderTopColor: '#FDF8EE',
-    borderTopWidth: 3,
-    paddingTop: 2,
+    borderBottomColor: '#FDF8EE',
+    borderBottomWidth: 3,
   },
   clickableHole: {
     borderColor: '#1F3F2A',
@@ -296,11 +324,34 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     width: 34,
   },
-  numberMarker: {
-    backgroundColor: '#5B3D22',
+  startRow: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  startPegGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  startHole: {
+    backgroundColor: '#4D3320',
+    borderColor: '#2F2116',
     borderRadius: 999,
-    height: 2,
-    width: 20,
+    borderWidth: 1,
+    height: 18,
+    position: 'relative',
+    width: 18,
+  },
+  startPeg: {
+    borderColor: '#FDF8EE',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 22,
+    left: 3,
+    position: 'absolute',
+    top: -8,
+    width: 11,
   },
   departBox: {
     alignSelf: 'center',
@@ -315,26 +366,6 @@ const styles = StyleSheet.create({
     color: '#5B3D22',
     fontSize: 11,
     fontWeight: '900',
-  },
-  legend: {
-    gap: 5,
-  },
-  legendItem: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 6,
-  },
-  legendDot: {
-    borderColor: '#FDF8EE',
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 11,
-    width: 11,
-  },
-  legendText: {
-    color: '#5B3D22',
-    fontSize: 12,
-    fontWeight: '800',
   },
   pegControls: {
     backgroundColor: 'rgba(255, 253, 248, 0.55)',

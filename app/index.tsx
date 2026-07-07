@@ -6,12 +6,30 @@ import { Feather } from '@expo/vector-icons';
 import { CardRow } from '@/components/CardRow';
 import { CribbageBoard } from '@/components/CribbageBoard';
 import { Card, cardLabel } from '@/game/cards';
-import { finishDiscard, startComputerRound } from '@/game/computerGame';
+import {
+  choosePlayerCut,
+  chooseStarterCut,
+  dealAfterCut,
+  finishDiscard,
+  legalPeggingCards,
+  passPlayerPeggingTurn,
+  playComputerPeggingTurn,
+  playPlayerPeggingCardOnly,
+  startComputerRound,
+  startDealtRound,
+} from '@/game/computerGame';
 import { dealPracticeHand } from '@/game/deck';
 import { scoreShowHand } from '@/game/scoring';
 import { formatScoreBreakdown } from '@/game/teaching';
 
 type AppSection = 'practice' | 'computer' | 'realtime';
+type PendingPegMove = {
+  from: number;
+  label: string;
+  points: number;
+  target: number;
+};
+type CountOwner = 'player' | 'computer';
 
 const SECTIONS: Array<{
   id: AppSection;
@@ -33,13 +51,26 @@ export default function HomeScreen() {
   const [computerGuess, setComputerGuess] = useState('');
   const [computerSubmitted, setComputerSubmitted] = useState(false);
   const [playerScore, setPlayerScore] = useState(0);
-  const [computerGameScore] = useState(0);
+  const [computerGameScore, setComputerGameScore] = useState(0);
   const [roundStartPlayerScore, setRoundStartPlayerScore] = useState(0);
   const [playerPeg, setPlayerPeg] = useState(0);
   const [pegSubmitted, setPegSubmitted] = useState(false);
+  const [pendingPegMove, setPendingPegMove] = useState<PendingPegMove | null>(null);
+  const [pendingPegChecked, setPendingPegChecked] = useState(false);
+  const [completedCounts, setCompletedCounts] = useState<CountOwner[]>([]);
   const score = useMemo(() => scoreShowHand(deal.hand, deal.starter, deal.isCrib), [deal]);
   const computerScore = useMemo(
-    () => scoreShowHand(computerRound.playerHand, computerRound.starter, false),
+    () =>
+      computerRound.starter
+        ? scoreShowHand(computerRound.playerHand, computerRound.starter, false)
+        : { total: 0, items: [] },
+    [computerRound],
+  );
+  const computerHandScore = useMemo(
+    () =>
+      computerRound.starter
+        ? scoreShowHand(computerRound.computerHand, computerRound.starter, false)
+        : { total: 0, items: [] },
     [computerRound],
   );
   const numericGuess = Number.parseInt(guess, 10);
@@ -49,8 +80,66 @@ export default function HomeScreen() {
   const isCorrect = submitted && hasGuess && numericGuess === score.total;
   const isComputerCorrect =
     computerSubmitted && hasComputerGuess && numericComputerGuess === computerScore.total;
-  const expectedPlayerPeg = Math.min(120, roundStartPlayerScore + computerScore.total);
+  const postPeggingPlayerScore = Math.min(120, playerScore + computerRound.peggingScores.player);
+  const postPeggingComputerScore = Math.min(120, computerGameScore + computerRound.peggingScores.computer);
+  const countOrder: CountOwner[] =
+    computerRound.dealer === 'player' ? ['computer', 'player'] : ['player', 'computer'];
+  const currentCountOwner =
+    computerRound.phase === 'count'
+      ? countOrder.find((owner) => !completedCounts.includes(owner)) ?? null
+      : null;
+  const isPlayerCountTurn = currentCountOwner === 'player';
+  const isComputerCountTurn = currentCountOwner === 'computer';
+  const isCountComplete = computerRound.phase === 'count' && currentCountOwner === null;
+  const playerCountVisible = completedCounts.includes('player') || isPlayerCountTurn;
+  const computerCountVisible = completedCounts.includes('computer') || isComputerCountTurn;
+  const isCountingPegPractice =
+    activeSection === 'computer' &&
+    computerRound.phase === 'count' &&
+    isPlayerCountTurn &&
+    computerSubmitted;
+  const countingPegStartScore = isCountingPegPractice ? roundStartPlayerScore : postPeggingPlayerScore;
+  const expectedPlayerPeg = Math.min(120, countingPegStartScore + computerScore.total);
+  const displayedPlayerScore = completedCounts.includes('player')
+    ? expectedPlayerPeg
+    : isCountingPegPractice
+      ? playerPeg
+      : postPeggingPlayerScore;
+  const displayedComputerScore = computerCountVisible
+    ? Math.min(120, postPeggingComputerScore + computerHandScore.total)
+    : postPeggingComputerScore;
+  const playerBoardFrontPeg =
+    pendingPegMove
+      ? playerPeg
+      : isCountingPegPractice
+        ? playerPeg
+        : postPeggingPlayerScore;
+  const playerBoardBackPeg =
+    pendingPegMove
+      ? pendingPegMove.from
+      : isCountingPegPractice
+        ? countingPegStartScore
+        : previousScoringPeg(playerScore, computerRound.peggingPlayed, 'player');
+  const computerBoardBackPeg = computerCountVisible
+    ? postPeggingComputerScore
+    : previousScoringPeg(computerGameScore, computerRound.peggingPlayed, 'computer');
+  const computerBoardFrontPeg = displayedComputerScore;
+  const isPendingPegCorrect =
+    Boolean(pendingPegMove) && playerPeg === pendingPegMove?.target;
   const isPegCorrect = pegSubmitted && playerPeg === expectedPlayerPeg;
+  const playerHasLegalPeggingCard =
+    computerRound.phase === 'pegging' &&
+    !pendingPegMove &&
+    legalPeggingCards(computerRound.playerPeggingHand, computerRound.peggingCount).length > 0;
+  const lastPeggingPlay = computerRound.peggingPlayed.at(-1);
+  const playerPlayedCards = computerRound.peggingPlayed
+    .filter((play) => play.player === 'player')
+    .map((play) => play.card);
+  const computerPlayedCards = computerRound.peggingPlayed
+    .filter((play) => play.player === 'computer')
+    .map((play) => play.card);
+  const starterJackDealer =
+    computerRound.starter?.rank === 'J' && computerRound.dealer ? computerRound.dealer : null;
 
   function checkAnswer() {
     setSubmitted(true);
@@ -60,6 +149,15 @@ export default function HomeScreen() {
     setDeal(dealPracticeHand());
     setGuess('');
     setSubmitted(false);
+  }
+
+  function resetPegPrompts(nextPlayerScore = playerScore) {
+    setRoundStartPlayerScore(nextPlayerScore);
+    setPlayerPeg(nextPlayerScore);
+    setPegSubmitted(false);
+    setPendingPegMove(null);
+    setPendingPegChecked(false);
+    setCompletedCounts([]);
   }
 
   function toggleDiscard(card: Card) {
@@ -78,9 +176,7 @@ export default function HomeScreen() {
     setSelectedDiscards([]);
     setComputerGuess('');
     setComputerSubmitted(false);
-    setRoundStartPlayerScore(playerScore);
-    setPlayerPeg(playerScore);
-    setPegSubmitted(false);
+    resetPegPrompts();
   }
 
   function newComputerRound() {
@@ -88,16 +184,145 @@ export default function HomeScreen() {
     setSelectedDiscards([]);
     setComputerGuess('');
     setComputerSubmitted(false);
-    setRoundStartPlayerScore(playerScore);
-    setPlayerPeg(playerScore);
+    resetPegPrompts();
+  }
+
+  function dealComputerHand() {
+    setComputerRound((round) => dealAfterCut(round));
+    setSelectedDiscards([]);
+    setComputerGuess('');
+    setComputerSubmitted(false);
+    resetPegPrompts();
+  }
+
+  function chooseCutCard(index: number) {
+    setComputerRound((round) => choosePlayerCut(round, index));
+  }
+
+  function chooseStarterCard(index: number) {
+    setComputerRound((round) => {
+      const peggingRound = chooseStarterCut(round, index);
+      if (peggingRound !== round && peggingRound.starter?.rank === 'J' && peggingRound.dealer) {
+        if (peggingRound.dealer === 'player') {
+          setPlayerScore((currentScore) => Math.min(120, currentScore + 2));
+        } else {
+          setComputerGameScore((currentScore) => Math.min(120, currentScore + 2));
+        }
+      }
+
+      return peggingRound.peggingTurn === 'computer'
+        ? playComputerPeggingTurn(peggingRound)
+        : peggingRound;
+    });
+  }
+
+  function playPlayerPeggingCard(card: Card) {
+    if (pendingPegMove) return;
+
+    setComputerRound((round) => {
+      const previousPlayerPeggingScore = round.peggingScores.player;
+      const afterPlayer = playPlayerPeggingCardOnly(round, card);
+      const lastPlay = afterPlayer.peggingPlayed.at(-1);
+
+      if (afterPlayer === round) return round;
+
+      if (lastPlay?.player === 'player' && lastPlay.points > 0) {
+        queuePendingPegMove(
+          previousPlayerPeggingScore,
+          afterPlayer.peggingScores.player,
+          lastPlay.label,
+        );
+        return afterPlayer;
+      }
+
+      if (afterPlayer.phase !== 'pegging') return afterPlayer;
+
+      const afterComputerResponse = playComputerPeggingTurn(afterPlayer);
+      if (afterComputerResponse.peggingScores.player > previousPlayerPeggingScore) {
+        queuePendingPegMove(
+          previousPlayerPeggingScore,
+          afterComputerResponse.peggingScores.player,
+          'go for 1',
+        );
+      }
+
+      return afterComputerResponse;
+    });
+  }
+
+  function queuePendingPegMove(fromPeggingScore: number, targetPeggingScore: number, label: string) {
+    const from = Math.min(120, playerScore + fromPeggingScore);
+    const target = Math.min(120, playerScore + targetPeggingScore);
+
+    setPlayerPeg(from);
+    setPendingPegMove({
+      from,
+      target,
+      points: targetPeggingScore - fromPeggingScore,
+      label,
+    });
+    setPendingPegChecked(false);
+  }
+
+  function passPeggingTurn() {
+    if (pendingPegMove) return;
+    setComputerRound((round) => passPlayerPeggingTurn(round));
+  }
+
+  function checkPendingPegMove() {
+    if (!pendingPegMove) return;
+
+    setPendingPegChecked(true);
+    if (playerPeg !== pendingPegMove.target) return;
+
+    setPendingPegMove(null);
+    setPendingPegChecked(false);
+    setComputerRound((round) =>
+      round.phase === 'pegging' && round.peggingTurn === 'computer'
+        ? playComputerPeggingTurn(round)
+        : round,
+    );
+  }
+
+  function submitComputerCount() {
+    setComputerSubmitted(true);
+    setRoundStartPlayerScore(postPeggingPlayerScore);
+    setPlayerPeg(postPeggingPlayerScore);
     setPegSubmitted(false);
   }
 
   function checkPlayerPeg() {
     setPegSubmitted(true);
     if (playerPeg === expectedPlayerPeg) {
-      setPlayerScore(expectedPlayerPeg);
+      setCompletedCounts((current) =>
+        current.includes('player') ? current : [...current, 'player'],
+      );
     }
+  }
+
+  function continueAfterComputerCount() {
+    setCompletedCounts((current) =>
+      current.includes('computer') ? current : [...current, 'computer'],
+    );
+  }
+
+  function dealNextComputerHand() {
+    const nextDealer = computerRound.dealer === 'player' ? 'computer' : 'player';
+    const nextPlayerScore = displayedPlayerScore;
+    const nextComputerScore = displayedComputerScore;
+
+    setPlayerScore(nextPlayerScore);
+    setComputerGameScore(nextComputerScore);
+    setComputerRound(startDealtRound(nextDealer));
+    setSelectedDiscards([]);
+    setComputerGuess('');
+    setComputerSubmitted(false);
+    setRoundStartPlayerScore(nextPlayerScore);
+    setPlayerPeg(nextPlayerScore);
+    setPegSubmitted(false);
+    setPendingPegMove(null);
+    setPendingPegChecked(false);
+    setCompletedCounts([]);
   }
 
   return (
@@ -186,7 +411,15 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.modeKicker}>Computer game</Text>
               <Text style={styles.modeTitle}>
-                {computerRound.phase === 'discard' ? 'Choose 2 cards for the crib.' : 'Count your hand.'}
+                {computerRound.phase === 'cut'
+                  ? 'Draw low card for first crib.'
+                  : computerRound.phase === 'discard'
+                    ? 'Choose 2 cards for the crib.'
+                    : computerRound.phase === 'starterCut'
+                      ? 'Cut the starter card.'
+                      : computerRound.phase === 'pegging'
+                        ? 'Lay down cards toward 31.'
+                        : 'Count your hand.'}
               </Text>
             </View>
             <Pressable style={styles.iconButton} onPress={newComputerRound} accessibilityLabel="New computer round">
@@ -194,51 +427,238 @@ export default function HomeScreen() {
             </Pressable>
           </View>
           <Text style={styles.modeCopy}>
-            This first computer mode starts with the discard and counting parts of a round. Pegging
-            comes next.
+            {computerRound.phase === 'cut'
+              ? 'Pick a card from the deck to cut. The computer will cut after you, and the lower card gets the first crib.'
+              : computerRound.phase === 'discard'
+                ? 'The first crib is set. Choose two cards to send to the crib.'
+                : computerRound.phase === 'starterCut'
+                  ? 'Cut the starter card before pegging begins. This extra card counts with both hands and the crib.'
+                  : computerRound.phase === 'pegging'
+                    ? 'Lay down cards in turn and count pegging points as the running total moves toward 31.'
+                    : 'Pegging is complete. Count your hand before asking the coach.'}
           </Text>
 
-          <View style={styles.scoreStrip}>
+            <View style={styles.scoreStrip}>
             <View style={styles.scoreBox}>
               <Text style={styles.scoreLabel}>You</Text>
-              <Text style={styles.scoreValue}>{playerScore}</Text>
+              <Text style={styles.scoreValue}>{displayedPlayerScore}</Text>
             </View>
             <View style={styles.scoreBox}>
               <Text style={styles.scoreLabel}>Computer</Text>
-              <Text style={styles.scoreValue}>{computerGameScore}</Text>
+              <Text style={styles.scoreValue}>{displayedComputerScore}</Text>
             </View>
             <View style={styles.scoreBox}>
-              <Text style={styles.scoreLabel}>Crib</Text>
-              <Text style={styles.scoreValue}>{computerRound.crib.length}</Text>
+              <Text style={styles.scoreLabel}>First crib</Text>
+              <Text style={styles.scoreValueSmall}>
+                {computerRound.dealer
+                  ? computerRound.dealer === 'player'
+                    ? 'You'
+                    : 'Computer'
+                  : 'Cut'}
+              </Text>
             </View>
           </View>
 
+          {computerRound.phase === 'cut' ? (
+            <View style={styles.cutPanel}>
+              {!computerRound.cut.player ? (
+                <>
+                  <Text style={styles.sectionTitle}>Choose your cut card</Text>
+                  <CutDeck count={15} onChoose={chooseCutCard} />
+                </>
+              ) : (
+                <>
+                  <View style={styles.cutResultRow}>
+                    <View style={styles.cutColumn}>
+                      <Text style={styles.sectionTitle}>Your cut</Text>
+                      <CardRow cards={[computerRound.cut.player]} size="small" />
+                    </View>
+                    {computerRound.cut.computer ? (
+                      <View style={styles.cutColumn}>
+                        <Text style={styles.sectionTitle}>Computer cut</Text>
+                        <CardRow cards={[computerRound.cut.computer]} size="small" />
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.modeCopy}>
+                    {!computerRound.dealer
+                      ? 'You cut the same rank, so nobody gets the crib yet. Cut again.'
+                      : computerRound.dealer === 'player'
+                      ? 'You cut the lower card, so you deal first and get the first crib.'
+                      : 'The computer cut the lower card, so it deals first and gets the first crib.'}
+                  </Text>
+                  {computerRound.dealer ? (
+                    <Pressable style={[styles.primaryButton, styles.fitButton]} onPress={dealComputerHand}>
+                      <Feather name="play" size={18} color="#FAFBF8" />
+                      <Text style={styles.primaryButtonText}>Deal hand</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable style={[styles.primaryButton, styles.fitButton]} onPress={newComputerRound}>
+                      <Feather name="refresh-cw" size={18} color="#FAFBF8" />
+                      <Text style={styles.primaryButtonText}>Cut again</Text>
+                    </Pressable>
+                  )}
+                </>
+              )}
+            </View>
+          ) : null}
+
+          {computerRound.phase === 'starterCut' ? (
+            <View style={styles.cutPanel}>
+              <Text style={styles.sectionTitle}>Choose the starter cut</Text>
+              <CutDeck count={15} onChoose={chooseStarterCard} />
+            </View>
+          ) : null}
+
+          {computerRound.phase !== 'cut' && computerRound.phase !== 'starterCut' ? (
+            <>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Computer hand</Text>
             <Text style={styles.mutedText}>
-              {computerRound.phase === 'discard' ? '6 cards' : '4 cards kept'}
+              {computerRound.phase === 'discard'
+                ? '6 cards'
+                : computerRound.phase === 'pegging'
+                  ? `${computerRound.computerPeggingHand.length} cards left`
+                  : computerCountVisible
+                    ? `${computerHandScore.total} points`
+                    : '4 cards kept'}
             </Text>
           </View>
-          <CardBackRow count={computerRound.computerHand.length} />
+          {computerCountVisible ? (
+            <CardRow cards={computerRound.computerHand} />
+          ) : (
+            <CardBackRow count={computerRound.computerHand.length} />
+          )}
+          {isComputerCountTurn ? (
+            <View style={[styles.feedback, styles.correct]}>
+              <Text style={styles.feedbackTitle}>
+                Computer hand scores {computerHandScore.total}.
+              </Text>
+              <Text style={styles.feedbackCopy}>
+                Computer moves from {postPeggingComputerScore} to {displayedComputerScore}.
+              </Text>
+              <View style={styles.breakdown}>
+                {formatScoreBreakdown(computerHandScore).map((line) => (
+                  <Text key={line} style={styles.breakdownLine}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+              <Pressable
+                style={[styles.primaryButton, styles.fitButton]}
+                onPress={continueAfterComputerCount}
+              >
+                <Feather name="play" size={18} color="#FAFBF8" />
+                <Text style={styles.primaryButtonText}>Continue</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {computerRound.phase === 'pegging' ? (
+            <PlayedCardRow label="Computer played" cards={computerPlayedCards} />
+          ) : null}
 
-          {computerRound.phase === 'count' ? (
+          {(computerRound.phase === 'pegging' || computerRound.phase === 'count') &&
+          computerRound.starter ? (
             <View style={styles.starterBlock}>
               <Text style={styles.sectionTitle}>Starter card</Text>
               <CardRow cards={[computerRound.starter]} size="small" />
+              {starterJackDealer ? (
+                <Text style={styles.feedbackCopy}>
+                  {starterJackDealer === 'player' ? 'You peg' : 'Computer pegs'} 2 for the starter
+                  jack.
+                </Text>
+              ) : null}
             </View>
           ) : null}
 
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Your hand</Text>
+            <Text style={styles.sectionTitle}>
+              {computerRound.phase === 'pegging' ? 'Your pegging cards' : 'Your hand'}
+            </Text>
             {computerRound.phase === 'discard' ? (
               <Text style={styles.mutedText}>{selectedDiscards.length}/2 selected</Text>
+            ) : computerRound.phase === 'pegging' ? (
+              <Text style={styles.mutedText}>Count: {computerRound.peggingCount}</Text>
             ) : null}
           </View>
-          <CardRow
-            cards={computerRound.playerHand}
-            onCardPress={computerRound.phase === 'discard' ? toggleDiscard : undefined}
-            selectedCards={selectedDiscards}
-          />
+          {computerRound.phase === 'pegging' ? (
+            <View style={styles.peggingPanel}>
+              <View style={styles.scoreStrip}>
+                <View style={styles.scoreBox}>
+                  <Text style={styles.scoreLabel}>Pegging count</Text>
+                  <Text style={styles.scoreValue}>{computerRound.peggingCount}</Text>
+                </View>
+                <View style={styles.scoreBox}>
+                  <Text style={styles.scoreLabel}>Turn</Text>
+                  <Text style={styles.scoreValueSmall}>
+                    {pendingPegMove
+                      ? 'Move peg'
+                      : computerRound.peggingTurn === 'player'
+                        ? 'You'
+                        : 'Computer'}
+                  </Text>
+                </View>
+                <View style={styles.scoreBox}>
+                  <Text style={styles.scoreLabel}>Your peg pts</Text>
+                  <Text style={styles.scoreValue}>{computerRound.peggingScores.player}</Text>
+                </View>
+                <View style={styles.scoreBox}>
+                  <Text style={styles.scoreLabel}>Computer peg pts</Text>
+                  <Text style={styles.scoreValue}>{computerRound.peggingScores.computer}</Text>
+                </View>
+              </View>
+              {lastPeggingPlay ? (
+                <View style={styles.peggingScoreNote}>
+                  <Text style={styles.feedbackCopy}>
+                    {lastPeggingPlay.player === 'player' ? 'You' : 'Computer'} played{' '}
+                    {cardLabel(lastPeggingPlay.card)}: {lastPeggingPlay.label}
+                  </Text>
+                </View>
+              ) : null}
+              {pendingPegMove ? (
+                <View style={styles.pegPrompt}>
+                  <View>
+                    <Text style={styles.sectionTitle}>Move your peg before the computer plays</Text>
+                    <Text style={styles.feedbackCopy}>
+                      {pendingPegMove.label}. Move from {pendingPegMove.from} to{' '}
+                      {pendingPegMove.target}, then check it.
+                    </Text>
+                  </View>
+                  <Pressable style={[styles.primaryButton, styles.fitButton]} onPress={checkPendingPegMove}>
+                    <Feather name="map-pin" size={18} color="#FAFBF8" />
+                    <Text style={styles.primaryButtonText}>Check peg</Text>
+                  </Pressable>
+                  {pendingPegChecked ? (
+                    <Text style={[styles.feedbackCopy, isPendingPegCorrect ? styles.correctText : styles.missedText]}>
+                      {isPendingPegCorrect
+                        ? 'Correct. The computer can play now.'
+                        : `Not quite. Your peg should land on ${pendingPegMove.target}.`}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+              <PlayedCardRow label="You played" cards={playerPlayedCards} />
+            </View>
+          ) : null}
+          {computerRound.phase !== 'count' || playerCountVisible ? (
+            <CardRow
+              cards={
+                computerRound.phase === 'pegging'
+                  ? computerRound.playerPeggingHand
+                  : computerRound.playerHand
+              }
+              onCardPress={
+                computerRound.phase === 'discard'
+                  ? toggleDiscard
+                  : computerRound.phase === 'pegging' && !pendingPegMove
+                    ? playPlayerPeggingCard
+                    : undefined
+              }
+              selectedCards={selectedDiscards}
+            />
+          ) : (
+            <Text style={styles.mutedText}>Your hand counts after the computer.</Text>
+          )}
 
           {computerRound.phase === 'discard' ? (
             <Pressable
@@ -253,7 +673,21 @@ export default function HomeScreen() {
               <Feather name="send" size={18} color="#FAFBF8" />
               <Text style={styles.primaryButtonText}>Send to crib</Text>
             </Pressable>
-          ) : (
+          ) : computerRound.phase === 'pegging' ? (
+            <View style={styles.peggingActions}>
+              <Text style={styles.modeCopy}>
+                {pendingPegMove
+                  ? 'Peg your points on the board. The computer will wait until you check the move.'
+                  : 'Click a card to lay it down. If you score, the computer waits while you move and check your peg.'}
+              </Text>
+              {!pendingPegMove && !playerHasLegalPeggingCard ? (
+                <Pressable style={[styles.primaryButton, styles.fitButton]} onPress={passPeggingTurn}>
+                  <Feather name="corner-down-right" size={18} color="#FAFBF8" />
+                  <Text style={styles.primaryButtonText}>Go</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : computerRound.phase === 'count' && !isPlayerCountTurn ? null : (
             <View style={styles.answerRow}>
               <TextInput
                 value={computerGuess}
@@ -267,12 +701,14 @@ export default function HomeScreen() {
                 style={styles.input}
                 maxLength={2}
               />
-              <Pressable style={styles.primaryButton} onPress={() => setComputerSubmitted(true)}>
+              <Pressable style={styles.primaryButton} onPress={submitComputerCount}>
                 <Feather name="check" size={18} color="#FAFBF8" />
                 <Text style={styles.primaryButtonText}>Check</Text>
               </Pressable>
             </View>
           )}
+            </>
+          ) : null}
         </View>
       ) : null}
 
@@ -309,7 +745,10 @@ export default function HomeScreen() {
         </View>
       ) : null}
 
-      {activeSection === 'computer' && computerRound.phase === 'count' && computerSubmitted ? (
+      {activeSection === 'computer' &&
+      computerRound.phase === 'count' &&
+      playerCountVisible &&
+      computerSubmitted ? (
         <View style={[styles.feedback, isComputerCorrect ? styles.correct : styles.missed]}>
           <Text style={styles.feedbackTitle}>
             {isComputerCorrect ? 'Correct.' : `Your hand scores ${computerScore.total}.`}
@@ -335,6 +774,7 @@ export default function HomeScreen() {
 
       {activeSection === 'computer' &&
       computerRound.phase === 'count' &&
+      isPlayerCountTurn &&
       computerSubmitted &&
       hasComputerGuess ? (
         <View style={styles.practicePanel}>
@@ -366,23 +806,53 @@ export default function HomeScreen() {
           ) : null}
         </View>
       ) : null}
+
+      {activeSection === 'computer' && isCountComplete ? (
+        <View style={styles.practicePanel}>
+          <View style={styles.modeHeader}>
+            <View>
+              <Text style={styles.modeKicker}>Hand complete</Text>
+              <Text style={styles.modeTitle}>Deal the next hand.</Text>
+            </View>
+          </View>
+          <Text style={styles.modeCopy}>
+            Scores carry forward and the deal alternates to{' '}
+            {computerRound.dealer === 'player' ? 'the computer' : 'you'}.
+          </Text>
+          <Pressable style={[styles.primaryButton, styles.fitButton]} onPress={dealNextComputerHand}>
+            <Feather name="play" size={18} color="#FAFBF8" />
+            <Text style={styles.primaryButtonText}>Deal next hand</Text>
+          </Pressable>
+        </View>
+      ) : null}
         </View>
 
         <View style={styles.boardRail}>
           <CribbageBoard
-            computerBackPeg={0}
-            computerFrontPeg={computerGameScore}
+            computerBackPeg={computerBoardBackPeg}
+            computerFrontPeg={computerBoardFrontPeg}
             onPegChange={(nextPeg) => {
               setPlayerPeg(nextPeg);
               setPegSubmitted(false);
             }}
-            playerBackPeg={roundStartPlayerScore}
-            playerFrontPeg={playerPeg}
+            playerBackPeg={playerBoardBackPeg}
+            playerFrontPeg={playerBoardFrontPeg}
           />
         </View>
       </View>
     </ScrollView>
   );
+}
+
+function previousScoringPeg(startScore: number, plays: { player: string; points: number }[], player: string) {
+  const playerScoringPlays = plays.filter((play) => play.player === player && play.points > 0);
+  if (playerScoringPlays.length === 0) return startScore;
+
+  const scoreBeforeLastPeg = playerScoringPlays
+    .slice(0, -1)
+    .reduce((total, play) => Math.min(120, total + play.points), startScore);
+
+  return scoreBeforeLastPeg;
 }
 
 function CardBackRow({ count }: { count: number }) {
@@ -392,6 +862,36 @@ function CardBackRow({ count }: { count: number }) {
         <View key={index} style={styles.cardBack}>
           <View style={styles.cardBackInner} />
         </View>
+      ))}
+    </View>
+  );
+}
+
+function PlayedCardRow({ cards, label }: { cards: Card[]; label: string }) {
+  return (
+    <View style={styles.playedRow}>
+      <Text style={styles.playedRowLabel}>{label}</Text>
+      {cards.length > 0 ? (
+        <CardRow cards={cards} size="small" />
+      ) : (
+        <Text style={styles.mutedText}>No cards yet.</Text>
+      )}
+    </View>
+  );
+}
+
+function CutDeck({ count, onChoose }: { count: number; onChoose: (index: number) => void }) {
+  return (
+    <View style={styles.cutDeck}>
+      {Array.from({ length: count }).map((_, index) => (
+        <Pressable
+          key={index}
+          accessibilityLabel={`Cut card ${index + 1}`}
+          onPress={() => onChoose(index)}
+          style={[styles.cutCardBack, { marginLeft: index === 0 ? 0 : -32 }]}
+        >
+          <View style={styles.cutCardBackInner} />
+        </Pressable>
       ))}
     </View>
   );
@@ -622,6 +1122,104 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '900',
     marginTop: 2,
+  },
+  scoreValueSmall: {
+    color: '#26302A',
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+  cutPanel: {
+    backgroundColor: '#F7F4EE',
+    borderColor: '#DDD5C8',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 14,
+    padding: 14,
+  },
+  cutColumn: {
+    gap: 10,
+  },
+  cutResultRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 18,
+  },
+  cutDeck: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingLeft: 32,
+    paddingVertical: 8,
+  },
+  cutCardBack: {
+    alignItems: 'center',
+    aspectRatio: 0.7,
+    backgroundColor: '#2D5A3B',
+    borderColor: '#1F3F2A',
+    borderRadius: 7,
+    borderWidth: 1,
+    height: 102,
+    justifyContent: 'center',
+    padding: 6,
+    shadowColor: '#1E241F',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  cutCardBackInner: {
+    borderColor: '#D9E7D3',
+    borderRadius: 5,
+    borderWidth: 2,
+    height: '100%',
+    width: '100%',
+  },
+  peggingPanel: {
+    backgroundColor: '#F7F4EE',
+    borderColor: '#DDD5C8',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
+  },
+  peggingScoreNote: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#DDD5C8',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+  },
+  playedRow: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#DDD5C8',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 8,
+    padding: 10,
+  },
+  playedRowLabel: {
+    color: '#26302A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  pegPrompt: {
+    backgroundColor: '#EEF5EA',
+    borderColor: '#BFD4B7',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12,
+  },
+  peggingActions: {
+    gap: 10,
+  },
+  correctText: {
+    color: '#2D5A3B',
+    fontWeight: '800',
+  },
+  missedText: {
+    color: '#9A392F',
+    fontWeight: '800',
   },
   mutedText: {
     color: '#7A8178',
