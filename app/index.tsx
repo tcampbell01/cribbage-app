@@ -450,7 +450,7 @@ const styles = StyleSheet.create({
   boardRail: {
     flexShrink: 0,
     maxWidth: '100%',
-    width: 420,
+    width: 340,
   },
   header: {
     gap: 8,

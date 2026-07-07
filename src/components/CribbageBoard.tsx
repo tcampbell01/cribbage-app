@@ -11,16 +11,16 @@ type Props = {
 };
 
 type Lane = {
-  id: 'computer' | 'neutral' | 'player';
+  id: 'computer' | 'player';
   color: string;
 };
 
 const TRACK_POINTS = Array.from({ length: 61 }, (_, index) => index);
 const LANES: Lane[] = [
   { id: 'computer', color: '#D94A3F' },
-  { id: 'neutral', color: '#F9F7EF' },
   { id: 'player', color: '#1777B7' },
 ];
+const FIVE_MARKERS = Array.from({ length: 12 }, (_, index) => index);
 
 export function CribbageBoard({
   computerBackPeg,
@@ -57,36 +57,22 @@ export function CribbageBoard({
       </View>
 
       <View style={styles.trackFrame}>
-        {LANES.map((lane) => (
-          <View key={lane.id} style={[styles.lane, { backgroundColor: lane.color }]}>
-            {TRACK_POINTS.map((point) => {
-              const isPlayerLane = lane.id === 'player';
-              const isComputerLane = lane.id === 'computer';
-              const hasPlayerBack = isPlayerLane && point === scoreToTrackPoint(playerBackPeg);
-              const hasPlayerFront = isPlayerLane && point === scoreToTrackPoint(playerFrontPeg);
-              const hasComputerBack = isComputerLane && point === scoreToTrackPoint(computerBackPeg);
-              const hasComputerFront =
-                isComputerLane && point === scoreToTrackPoint(computerFrontPeg);
-              const HoleContainer = isPlayerLane ? Pressable : View;
-              const showScoreMarker = lane.id === 'neutral' && point > 0 && point % 5 === 0;
-
-              return (
-                <HoleContainer
-                  key={point}
-                  accessibilityLabel={isPlayerLane ? `Move front peg to ${point}` : undefined}
-                  onPress={isPlayerLane ? () => chooseHole(point) : undefined}
-                  style={[styles.hole, isPlayerLane ? styles.clickableHole : null]}
-                >
-                  {showScoreMarker ? <Text style={styles.scoreMarker}>{point}</Text> : null}
-                  {hasPlayerBack ? <Peg color="#173D28" offset="back" /> : null}
-                  {hasPlayerFront ? <Peg color="#2D5A3B" offset="front" /> : null}
-                  {hasComputerBack ? <Peg color="#5F261D" offset="back" /> : null}
-                  {hasComputerFront ? <Peg color="#7A3E2E" offset="front" /> : null}
-                </HoleContainer>
-              );
-            })}
-          </View>
-        ))}
+        <TrackLane
+          backPeg={computerBackPeg}
+          color={LANES[0].color}
+          frontPeg={computerFrontPeg}
+          frontPegColor="#7A3E2E"
+          backPegColor="#5F261D"
+        />
+        <NumberLine />
+        <TrackLane
+          backPeg={playerBackPeg}
+          color={LANES[1].color}
+          frontPeg={playerFrontPeg}
+          frontPegColor="#2D5A3B"
+          backPegColor="#173D28"
+          onChooseHole={chooseHole}
+        />
       </View>
 
       <View style={styles.departBox}>
@@ -118,6 +104,59 @@ export function CribbageBoard({
           </Pressable>
         </View>
       </View>
+    </View>
+  );
+}
+
+function TrackLane({
+  backPeg,
+  backPegColor,
+  color,
+  frontPeg,
+  frontPegColor,
+  onChooseHole,
+}: {
+  backPeg: number;
+  backPegColor: string;
+  color: string;
+  frontPeg: number;
+  frontPegColor: string;
+  onChooseHole?: (point: number) => void;
+}) {
+  return (
+    <View style={[styles.lane, { backgroundColor: color }]}>
+      {TRACK_POINTS.map((point) => {
+        const HoleContainer = onChooseHole ? Pressable : View;
+        const isFiveLine = point > 0 && point % 5 === 0;
+
+        return (
+          <HoleContainer
+            key={point}
+            accessibilityLabel={onChooseHole ? `Move front peg to ${point}` : undefined}
+            onPress={onChooseHole ? () => onChooseHole(point) : undefined}
+            style={[
+              styles.hole,
+              isFiveLine ? styles.fiveLineHole : null,
+              onChooseHole ? styles.clickableHole : null,
+            ]}
+          >
+            {point === scoreToTrackPoint(backPeg) ? <Peg color={backPegColor} offset="back" /> : null}
+            {point === scoreToTrackPoint(frontPeg) ? (
+              <Peg color={frontPegColor} offset="front" />
+            ) : null}
+          </HoleContainer>
+        );
+      })}
+    </View>
+  );
+}
+
+function NumberLine() {
+  return (
+    <View style={styles.numberLine}>
+      {FIVE_MARKERS.map((marker) => (
+        <View key={marker} style={styles.numberMarker} />
+      ))}
     </View>
   );
 }
@@ -155,7 +194,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     gap: 12,
-    maxWidth: 420,
+    maxWidth: 340,
     padding: 20,
     shadowColor: '#1E241F',
     shadowOffset: { width: 0, height: 6 },
@@ -200,7 +239,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     padding: 12,
   },
   lane: {
@@ -212,16 +251,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     padding: 9,
-    width: 104,
+    width: 62,
   },
   hole: {
     backgroundColor: '#4D3320',
     borderColor: '#2F2116',
     borderRadius: 999,
     borderWidth: 1,
-    height: 17,
+    height: 18,
     position: 'relative',
-    width: 17,
+    width: 18,
+  },
+  fiveLineHole: {
+    borderTopColor: '#FDF8EE',
+    borderTopWidth: 3,
+    paddingTop: 2,
   },
   clickableHole: {
     borderColor: '#1F3F2A',
@@ -242,13 +286,21 @@ const styles = StyleSheet.create({
   frontPeg: {
     right: -6,
   },
-  scoreMarker: {
-    color: '#5B3D22',
-    fontSize: 10,
-    fontWeight: '900',
-    left: -1,
-    position: 'absolute',
-    top: -15,
+  numberLine: {
+    alignItems: 'center',
+    backgroundColor: '#F9F7EF',
+    borderColor: 'rgba(64, 39, 19, 0.28)',
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    width: 34,
+  },
+  numberMarker: {
+    backgroundColor: '#5B3D22',
+    borderRadius: 999,
+    height: 2,
+    width: 20,
   },
   departBox: {
     alignSelf: 'center',
