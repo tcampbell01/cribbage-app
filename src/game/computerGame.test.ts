@@ -181,6 +181,38 @@ describe('computer game round', () => {
     });
   });
 
+  it('labels the final go point as last card when pegging ends after a pass', () => {
+    const round = {
+      ...startComputerRound(),
+      phase: 'pegging' as const,
+      playerHand: [],
+      computerHand: [],
+      playerPeggingHand: [],
+      computerPeggingHand: [],
+      peggingCount: 20,
+      peggingTurn: 'player' as const,
+      peggingScores: { player: 0, computer: 0 },
+      peggingPlayed: [
+        {
+          player: 'computer' as const,
+          card: { rank: '7', suit: 'clubs' as const },
+          count: 20,
+          points: 0,
+          label: 'No points',
+        },
+      ],
+    };
+
+    const nextRound = passPlayerPeggingTurn(round);
+
+    expect(nextRound.phase).toBe('count');
+    expect(nextRound.peggingScores.computer).toBe(1);
+    expect(nextRound.peggingPlayed.at(-1)).toMatchObject({
+      points: 1,
+      label: 'last card for 1',
+    });
+  });
+
   it('does not deal before both players have cut', () => {
     expect(() => dealAfterCut(startComputerRound())).toThrow(/Cannot deal/);
   });

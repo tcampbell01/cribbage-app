@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo } from 'react';
+import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 type Props = {
@@ -19,6 +20,11 @@ const TRACK_ROWS = Array.from({ length: 30 }, (_, index) => ({
   left: 30 - index,
   right: 31 + index,
 }));
+const FINISH_SCORE = 121;
+const HOLE_SIZE = 18;
+const HOLE_GAP = 8;
+const LANE_PADDING = 9;
+const ROW_STEP = HOLE_SIZE + HOLE_GAP;
 const LANES: Lane[] = [
   { id: 'computer', color: '#D94A3F' },
   { id: 'player', color: '#1777B7' },
@@ -27,19 +33,19 @@ const LANES: Lane[] = [
 export function CribbageBoard({
   computerBackPeg,
   computerFrontPeg,
-  maxScore = 120,
+  maxScore = FINISH_SCORE,
   onPegChange,
   playerBackPeg,
   playerFrontPeg,
 }: Props) {
   function movePeg(delta: number) {
-    onPegChange(Math.max(0, Math.min(maxScore, playerFrontPeg + delta)));
+    onPegChange(Math.max(0, Math.min(maxScore, playerBackPeg + delta)));
   }
 
   function chooseHole(point: number) {
     const baseLap = Math.floor(playerFrontPeg / 60) * 60;
     const currentTrackPoint = scoreToTrackPoint(playerFrontPeg);
-    const crossesStart = point < currentTrackPoint && baseLap < 60;
+    const crossesStart = currentTrackPoint !== null && point < currentTrackPoint && baseLap < 60;
     const nextScore = Math.min(maxScore, (crossesStart ? 60 : baseLap) + point);
 
     onPegChange(nextScore);
@@ -67,6 +73,7 @@ export function CribbageBoard({
           frontPegColor="#2D5A3B"
           backPegColor="#173D28"
           onChooseHole={chooseHole}
+          draggable
         />
       </View>
 
@@ -88,8 +95,18 @@ export function CribbageBoard({
         />
       </View>
 
+      <View style={styles.finishPocket}>
+        <Text style={styles.finishText}>FINISH</Text>
+        <View style={styles.finishPegRow}>
+          <FinishPeg color="#5F261D" visible={computerBackPeg >= maxScore} />
+          <FinishPeg color="#7A3E2E" visible={computerFrontPeg >= maxScore} />
+          <FinishPeg color="#173D28" visible={playerBackPeg >= maxScore} />
+          <FinishPeg color="#2D5A3B" visible={playerFrontPeg >= maxScore} />
+        </View>
+      </View>
+
       <View style={styles.pegControls}>
-        <Text style={styles.controlLabel}>Move your front peg</Text>
+        <Text style={styles.controlLabel}>Move your back peg</Text>
         <View style={styles.stepper}>
           <Pressable style={styles.stepperButton} onPress={() => movePeg(-5)}>
             <Text style={styles.stepperText}>-5</Text>
@@ -97,7 +114,7 @@ export function CribbageBoard({
           <Pressable style={styles.stepperButton} onPress={() => movePeg(-1)}>
             <Feather name="minus" size={18} color="#26302A" />
           </Pressable>
-          <Text style={styles.pegValue}>{playerFrontPeg}</Text>
+          <Text style={styles.pegValue}>{playerBackPeg}</Text>
           <Pressable style={styles.stepperButton} onPress={() => movePeg(1)}>
             <Feather name="plus" size={18} color="#26302A" />
           </Pressable>
@@ -128,17 +145,39 @@ function TrackLane({
   color,
   frontPeg,
   frontPegColor,
+  draggable = false,
   onChooseHole,
 }: {
   backPeg: number;
   backPegColor: string;
   color: string;
+  draggable?: boolean;
   frontPeg: number;
   frontPegColor: string;
   onChooseHole?: (point: number) => void;
 }) {
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: () => draggable && Boolean(onChooseHole),
+        onPanResponderRelease: (event) => {
+          if (!onChooseHole) return;
+
+          const point = locationToTrackPoint(
+            event.nativeEvent.locationX,
+            event.nativeEvent.locationY,
+          );
+          if (point !== null) onChooseHole(point);
+        },
+      }),
+    [draggable, onChooseHole],
+  );
+
   return (
-    <View style={[styles.lane, { backgroundColor: color }]}>
+    <View
+      style={[styles.lane, { backgroundColor: color }]}
+      {...(draggable ? panResponder.panHandlers : {})}
+    >
       {TRACK_ROWS.map((row) => (
         <View key={`${row.left}-${row.right}`} style={styles.laneRow}>
           <TrackHole
@@ -180,10 +219,12 @@ function TrackHole({
 }) {
   const HoleContainer = onChooseHole ? Pressable : View;
   const isFiveLine = point % 5 === 0;
+  const backTrackPoint = scoreToTrackPoint(backPeg);
+  const frontTrackPoint = scoreToTrackPoint(frontPeg);
 
   return (
     <HoleContainer
-      accessibilityLabel={onChooseHole ? `Move front peg to ${point}` : undefined}
+      accessibilityLabel={onChooseHole ? `Move back peg to ${point}` : undefined}
       onPress={onChooseHole ? () => onChooseHole(point) : undefined}
       style={[
         styles.hole,
@@ -191,10 +232,10 @@ function TrackHole({
         onChooseHole ? styles.clickableHole : null,
       ]}
     >
-      {backPeg > 0 && point === scoreToTrackPoint(backPeg) ? (
+      {backTrackPoint !== null && point === backTrackPoint ? (
         <Peg color={backPegColor} offset="back" />
       ) : null}
-      {frontPeg > 0 && point === scoreToTrackPoint(frontPeg) ? (
+      {frontTrackPoint !== null && point === frontTrackPoint ? (
         <Peg color={frontPegColor} offset="front" />
       ) : null}
     </HoleContainer>
@@ -206,8 +247,29 @@ function NumberLine() {
 }
 
 function scoreToTrackPoint(score: number) {
+  if (score <= 0 || score >= FINISH_SCORE) return null;
   if (score <= 60) return score;
   return score - 60;
+}
+
+function locationToTrackPoint(x: number, y: number) {
+  const row = Math.max(
+    0,
+    Math.min(TRACK_ROWS.length - 1, Math.round((y - LANE_PADDING - HOLE_SIZE / 2) / ROW_STEP)),
+  );
+  const leftCenter = LANE_PADDING + HOLE_SIZE / 2;
+  const rightCenter = LANE_PADDING + HOLE_SIZE + HOLE_GAP + HOLE_SIZE / 2;
+  const side = Math.abs(x - leftCenter) <= Math.abs(x - rightCenter) ? 'left' : 'right';
+
+  return TRACK_ROWS[row][side];
+}
+
+function FinishPeg({ color, visible }: { color: string; visible: boolean }) {
+  return (
+    <View style={styles.finishHole}>
+      {visible ? <View style={[styles.finishPeg, { backgroundColor: color }]} /> : null}
+    </View>
+  );
 }
 
 function Peg({ color, offset }: { color: string; offset: 'back' | 'front' }) {
@@ -248,6 +310,7 @@ const styles = StyleSheet.create({
   },
   finishPocket: {
     alignItems: 'center',
+    alignSelf: 'center',
     backgroundColor: '#EBC389',
     borderColor: '#B37D43',
     borderRadius: 999,
@@ -256,6 +319,29 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 7,
+  },
+  finishPegRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  finishHole: {
+    backgroundColor: '#4D3320',
+    borderColor: '#2F2116',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 16,
+    position: 'relative',
+    width: 16,
+  },
+  finishPeg: {
+    borderColor: '#FDF8EE',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 20,
+    left: 2,
+    position: 'absolute',
+    top: -7,
+    width: 10,
   },
   finishText: {
     color: '#5B3D22',

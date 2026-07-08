@@ -307,7 +307,24 @@ function awardGo(round: ComputerRound, player: PlayerId): ComputerRound {
     peggingTurn: player === 'player' ? 'computer' as const : 'player' as const,
   };
 
-  return isPeggingComplete(nextRound) ? finishPegging(nextRound) : nextRound;
+  if (!isPeggingComplete(nextRound)) return nextRound;
+
+  return {
+    ...nextRound,
+    phase: 'count',
+    peggingPlayed: nextRound.peggingPlayed.map((play, index) =>
+      index === nextRound.peggingPlayed.length - 1 && play.player === player
+        ? {
+            ...play,
+            points: play.points + 1,
+            label:
+              play.label === 'No points'
+                ? 'last card for 1'
+                : `${play.label}, last card for 1`,
+          }
+        : play,
+    ),
+  };
 }
 
 function finishPegging(round: ComputerRound): ComputerRound {
